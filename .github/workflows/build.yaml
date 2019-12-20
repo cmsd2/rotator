@@ -31,6 +31,11 @@ jobs:
           mkdir -p dist/rotator
           cp target/release/rotator dist/rotator/bootstrap
           zip -j dist/rotator.zip dist/rotator/bootstrap
+      - name: upload lambda zip
+        uses: actions/upload-artifact@v1
+        with:
+          name: rotator.zip
+          path: dist/rotator.zip
       - name: deploy infra
         run: |
           cd infra
