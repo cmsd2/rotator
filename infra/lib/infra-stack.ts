@@ -3,7 +3,6 @@ import * as lambda from '@aws-cdk/aws-lambda';
 import * as iam from '@aws-cdk/aws-iam';
 import * as codedeploy from '@aws-cdk/aws-codedeploy';
 import * as path from 'path';
-import {lambda_deployment} from './lambda';
 import {execSync} from 'child_process';
 
 export class InfraStack extends cdk.Stack {
@@ -15,21 +14,26 @@ export class InfraStack extends cdk.Stack {
     const hash = process.env.GITHUB_SHA || execSync('git rev-parse --short HEAD').toString('utf8');
     const aliasName = 'prod';
 
-    let rotator = lambda_deployment(this, 'rotator', {
-      aliasName: aliasName,
+    let role = new iam.Role(this, id + '-lambda-role', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com')
+    });
+
+    let fn = new lambda.Function(this, id + '-function', {
       code: lambda.Code.fromAsset(path.join(__dirname, '..', '..', 'dist', 'rotator.zip')),
       handler: 'unused',
-      hash: hash,
       memorySize: 128,
       runtime: lambda.Runtime.PROVIDED,
-      deploymentConfig: codedeploy.LambdaDeploymentConfig.ALL_AT_ONCE,
+      role: role,
       environment: {
         RUST_LOG: 'info'
       }
     });
 
+    role.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName("service-role/AWSLambdaBasicExecutionRole"));
+    role.addManagedPolicy(iam.ManagedPolicy.fromAwsManagedPolicyName("AWSXrayWriteOnlyAccess"));
+
     let lambdaPolicy = new iam.ManagedPolicy(this, id + '-lambda-policy');
-    
+
     lambdaPolicy.addStatements(new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: [
@@ -54,19 +58,19 @@ export class InfraStack extends cdk.Stack {
         ],
         conditions: {
           StringEquals: {
-              'secretsmanager:Resource/AllowRotationLambdaArn': rotator.lambda.functionArn
+              'secretsmanager:Resource/AllowRotationLambdaArn': fn.functionArn
           }
         }
       }),
     );
 
-    rotator.role.addManagedPolicy(lambdaPolicy);
+    role.addManagedPolicy(lambdaPolicy);
 
-    rotator.lambda.addPermission('trust-secretsmanager', {
+    fn.addPermission('trust-secretsmanager', {
       action: 'lambda:InvokeFunction',
       principal: new iam.ServicePrincipal('secretsmanager.amazonaws.com'),
     });
 
-    this.rotator_lambda = rotator.lambda;
+    this.rotator_lambda = fn;
   }
 }
