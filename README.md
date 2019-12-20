@@ -7,6 +7,14 @@ Supported resources:
 
 1. IAM Service Specific Credentials
 
+## Intended Use
+
+This rotator lambda is intended to be used to automatically rotate service-specific passwords for IAM users used by automated systems.
+
+It is not primarily intended to be used for human users. Humans should use federated identity instead of fixed IAM users if at all possible.
+
+Service-specific passwords can be useful for accessing a small number of resource types that do not natively support IAM authentication such as CodeCommit with the git cli and AWS Managed Cassandra Service.
+
 ## Setup
 
 1. Build this lambda package and create the lambda in your account optionally using the provided `infra` AWS CDK project
@@ -37,3 +45,13 @@ The [infra](./infra) directory contains two cloudformation stacks defined using 
 Every effort has been made to limit the scope of permissions provided to various components.
 
 Please review the code before deploying into your own account.
+
+## IAM for CodeCommit
+
+Users using service-specific credentials to access codecommit through the git cli will need `codecommit:GitPull` and `codecommit:GitPush` permissions, and also `kms:Decrypt` and `kms:Encrypt` for the CMK used to encrypt the repository.
+
+In addition, users will need these permissions without requiring MFA. It's typical practice to require all but a few operations to enforce MFA. This blanket Deny-with-conditions will prevent the use of service-specific credentials with the git cli.
+
+For troubleshooting permissions, check the CloudTrail logs and also try running the Policy Simulator.
+
+The preferred approach however is to use federated identity along with the git credential manager.
