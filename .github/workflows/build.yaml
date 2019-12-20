@@ -1,0 +1,41 @@
+name: Build
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v1
+      - name: Use Node.js 10.x
+        uses: actions/setup-node@v1
+        with:
+          node-version: 10.x
+      - name: npm install, build, and test
+        run: |
+          cd infra
+          yarn
+        env:
+          CI: true
+      - name: test lambdas
+        uses: cmsd2/lambda-rust-cargo-action@v1
+        with:
+          args: test
+      - name: build lambdas
+        uses: cmsd2/lambda-rust-cargo-action@v1
+        with:
+          args: build --release
+      - name: package rotator lambda
+        run: |
+          mkdir -p dist/rotator
+          cp target/release/rotator dist/rotator/bootstrap
+          zip -j dist/rotator.zip dist/rotator/bootstrap
+      - name: deploy infra
+        run: |
+          cd infra
+          yarn cdk deploy --require-approval never --ci '*'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-west-1
