@@ -28,35 +28,39 @@ export class InfraStack extends cdk.Stack {
       }
     });
 
-    rotator.role.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'iam:ListServiceSpecificCredentials',
-        'iam:*ServiceSpecificCredential',
-      ],
-      resources: [
-        '*'
-      ]
-    }));
-
-    rotator.role.addToPolicy(new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'secretsmanager:DescribeSecret',
-        'secretsmanager:GetRandomPassword',
-        'secretsmanager:GetSecretValue',
-        'secretsmanager:PutSecretValue',
-        'secretsmanager:UpdateSecretVersionStage'
-      ],
-      resources: [
-        '*'
-      ],
-      conditions: {
-        StringEquals: {
-            'secretsmanager:Resource/AllowRotationLambdaArn': rotator.lambda.functionArn
+    let lambdaPolicy = new iam.ManagedPolicy(this, id + '-lambda-policy');
+    
+    lambdaPolicy.addStatements(new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'iam:ListServiceSpecificCredentials',
+          'iam:*ServiceSpecificCredential',
+        ],
+        resources: [
+          '*'
+        ]
+      }),
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: [
+          'secretsmanager:DescribeSecret',
+          'secretsmanager:GetRandomPassword',
+          'secretsmanager:GetSecretValue',
+          'secretsmanager:PutSecretValue',
+          'secretsmanager:UpdateSecretVersionStage'
+        ],
+        resources: [
+          '*'
+        ],
+        conditions: {
+          StringEquals: {
+              'secretsmanager:Resource/AllowRotationLambdaArn': rotator.lambda.functionArn
+          }
         }
-      }
-    }))
+      }),
+    );
+
+    rotator.role.addManagedPolicy(lambdaPolicy);
 
     rotator.lambda.addPermission('trust-secretsmanager', {
       action: 'lambda:InvokeFunction',
