@@ -113,7 +113,7 @@ impl Resource for ServiceSpecificCredentialResource {
             if let Some(cred_to_reset) = cred_to_reset {
                 info!("reseting service specific credential id={} user_name={}", cred_to_reset.service_specific_credential_id, cred_to_reset.service_user_name);
 
-                cred = reset_service_specific_credential(&cred_to_reset.service_specific_credential_id, Some(&cred_to_reset.service_user_name), timeout)
+                cred = reset_service_specific_credential(&cred_to_reset.service_specific_credential_id, Some(&self.user_name), timeout)
                     .map_err(|err| RotatorError::IamError {
                         secret_id: self.secret_id.to_string(),
                         message: format!("reset service specific credential error: {:?}", err)
@@ -122,7 +122,7 @@ impl Resource for ServiceSpecificCredentialResource {
                 if cred.status == CredentialStatus::Inactive {
                     info!("activating service specific credential id={} user_name={}", cred.service_specific_credential_id, cred.service_user_name);
 
-                    update_service_specific_credential(&cred.service_specific_credential_id, Some(&cred.service_user_name), CredentialStatus::Active, timeout)
+                    update_service_specific_credential(&cred.service_specific_credential_id, Some(&self.user_name), CredentialStatus::Active, timeout)
                         .map_err(|err| RotatorError::IamError {
                             secret_id: self.secret_id.to_string(),
                             message: format!("update service specific credential error: {:?}", err)
