@@ -24,6 +24,7 @@ export class TestStack extends cdk.Stack {
     let secret = new secretsmanager.Secret(this, id + '-secret', {
         secretName: id,
     });
+    secret.secretValueFromJson('{}');
     cdk.Tag.add(secret, 'rotator:resourceType', 'ServiceSpecificCredential');
     cdk.Tag.add(secret, 'rotator:userName', user.userName);
     cdk.Tag.add(secret, 'rotator:serviceName', 'codecommit.amazonaws.com');
