@@ -60,7 +60,7 @@ export class InfraStack extends cdk.Stack {
       }),
     );
 
-    rotator.role.addManagedPolicy(lambdaPolicy);
+    lambdaPolicy.attachToRole(rotator.role);
 
     rotator.lambda.addPermission('trust-secretsmanager', {
       action: 'lambda:InvokeFunction',
