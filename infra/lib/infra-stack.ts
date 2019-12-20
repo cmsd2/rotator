@@ -53,7 +53,7 @@ export class InfraStack extends cdk.Stack {
       ],
       conditions: {
         StringEquals: {
-            "secretsmanager:Resource/AllowRotationLambdaArn": rotator.lambda.functionArn
+            'secretsmanager:Resource/AllowRotationLambdaArn': rotator.lambda.functionArn
         }
       }
     }))

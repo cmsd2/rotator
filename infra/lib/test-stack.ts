@@ -17,17 +17,8 @@ export class TestStack extends cdk.Stack {
         description: 'repo for testing rotating service-specific credentials',
     });
 
-    let policy = new iam.ManagedPolicy(this, id + 'user-policy');
-
-    policy.addStatements(new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        resources: [repo.repositoryArn],
-        actions: ['*'],
-    }));
-
     let user = new iam.User(this, id + '-user', {
         userName: id,
-        permissionsBoundary: policy,
     });
 
     let secret = new secretsmanager.Secret(this, id + '-secret', {
@@ -41,5 +32,29 @@ export class TestStack extends cdk.Stack {
         rotationLambda: props.rotator_lambda,
         automaticallyAfter: cdk.Duration.days(7),
     });
+
+    let policy = new iam.ManagedPolicy(this, id + '-user-policy');
+
+    const statements = [
+        new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            resources: [repo.repositoryArn],
+            actions: ['*'],
+        }),
+        new iam.PolicyStatement({
+            effect: iam.Effect.ALLOW,
+            resources: [secret.secretArn],
+            actions: ['secretsmanager:GetSecretValue'],
+            conditions: {
+                'ForAnyValue:StringLike': {
+                    'secretsmanager:VersionStage' : 'AWSCURRENT',
+                }
+            }
+        })
+    ];
+
+    policy.addStatements(...statements);
+
+    user.addManagedPolicy(policy);
   }
 }
