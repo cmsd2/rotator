@@ -55,6 +55,6 @@ export class TestStack extends cdk.Stack {
 
     policy.addStatements(...statements);
 
-    user.addManagedPolicy(policy);
+    policy.attachToUser(user);
   }
 }
