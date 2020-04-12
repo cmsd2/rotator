@@ -22,7 +22,7 @@ impl StdError for ResourceTypeParseError {
 
 impl fmt::Display for ResourceTypeParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "resource type parse error: {}", self.description())
+        write!(f, "resource type parse error: {}", self)
     }
 }
 
