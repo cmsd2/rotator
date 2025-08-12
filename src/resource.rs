@@ -20,7 +20,9 @@ const MAX_SERVICE_SPECIFIC_CREDENTIALS: usize = 2;
 #[async_trait::async_trait]
 pub trait Resource {
     async fn create_new_password(&self, current_value: SecretValue) -> RotatorResult<Secret>;
+    #[allow(dead_code)]
     async fn set_password(&self, s: Secret) -> RotatorResult<()>;
+    #[allow(dead_code)]
     async fn test_password(&self, s: Secret) -> RotatorResult<()>;
 }
 
