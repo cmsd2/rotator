@@ -1,4 +1,5 @@
-use std::time::Duration;
+use aws_sdk_iam::types::StatusType;
+
 use crate::error::{RotatorResult, RotatorError};
 use crate::passwd::get_random_password;
 use crate::config::Config;
@@ -16,27 +17,31 @@ use crate::value::{
 
 const MAX_SERVICE_SPECIFIC_CREDENTIALS: usize = 2;
 
+#[async_trait::async_trait]
 pub trait Resource {
-    fn create_new_password(&self, current_value: SecretValue) -> RotatorResult<Secret>;
-    fn set_password(&self, s: Secret) -> RotatorResult<()>;
-    fn test_password(&self, s: Secret) -> RotatorResult<()>;
+    async fn create_new_password(&self, current_value: SecretValue) -> RotatorResult<Secret>;
+    async fn set_password(&self, s: Secret) -> RotatorResult<()>;
+    async fn test_password(&self, s: Secret) -> RotatorResult<()>;
 }
 
 pub struct GenericResource {
+    config: Config,
 }
 
 impl GenericResource {
     #[allow(dead_code)]
-    pub fn new() -> Self {
-        GenericResource {}
+    pub fn new(config: Config) -> Self {
+        GenericResource {
+            config
+        }
     }
 }
 
+#[async_trait::async_trait]
 impl Resource for GenericResource {
 
-    fn create_new_password(&self, _current_value: SecretValue) -> RotatorResult<Secret> {
-        let timeout = Duration::from_secs(2);
-        let password = get_random_password(timeout)?;
+    async fn create_new_password(&self, _current_value: SecretValue) -> RotatorResult<Secret> {
+        let password = get_random_password(&self.config).await?;
         
         Ok(Secret {
             password: Some(password),
@@ -44,49 +49,46 @@ impl Resource for GenericResource {
         })
     }
 
-    fn set_password(&self, _s: Secret) -> RotatorResult<()> {
+    async fn set_password(&self, _s: Secret) -> RotatorResult<()> {
         unimplemented!()
     }
 
-    fn test_password(&self, _s: Secret) -> RotatorResult<()> {
+    async fn test_password(&self, _s: Secret) -> RotatorResult<()> {
         unimplemented!()
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ServiceSpecificCredentialResource {
-    secret_id: String,
+    config: Config,
     user_name: String,
     service_name: String,
 }
 
 impl ServiceSpecificCredentialResource {
-    pub fn new(cfg: &Config) -> RotatorResult<Self> {
-        let service_name = cfg.service_name.as_ref().ok_or_else(|| RotatorError::InvalidConfig {
-            secret_id: cfg.secret_id.to_string(),
-            message: format!("missing service name for service specific credential"),
+    pub fn new(config: &Config) -> RotatorResult<Self> {
+        let service_name = config.service_name.as_ref().ok_or_else(|| RotatorError::InvalidConfig {
+            message: format!("missing service name for service specific credential for secret {}", config.secret_id),
         })?;
 
-        let user_name = cfg.user_name.as_ref().ok_or_else(|| RotatorError::InvalidConfig {
-            secret_id: cfg.secret_id.to_string(),
-            message: format!("missing resource arn for service specific credential"),
+        let user_name = config.user_name.as_ref().ok_or_else(|| RotatorError::InvalidConfig {
+            message: format!("missing resource arn for service specific credential for secret {}", config.secret_id),
         })?;
         
         Ok(ServiceSpecificCredentialResource {
-            secret_id: cfg.secret_id.to_string(),
-            user_name: user_name.to_string(),
-            service_name: service_name.to_string(),
+            config: config.clone(),
+            service_name: service_name.clone(),
+            user_name: user_name.clone(),
         })      
     }
 }
 
+#[async_trait::async_trait]
 impl Resource for ServiceSpecificCredentialResource {
-    fn create_new_password(&self, current_value: SecretValue) -> RotatorResult<Secret> {
-        let timeout = Duration::from_secs(2);
-        
-        let creds = list_service_specific_credentials(Some(&self.user_name), Some(&self.service_name), timeout)
-            .map_err(|err| RotatorError::IamError {
-                secret_id: self.secret_id.to_string(),
+    async fn create_new_password(&self, current_value: SecretValue) -> RotatorResult<Secret> {
+        let creds = list_service_specific_credentials(&self.config, Some(&self.user_name), Some(&self.service_name)).await
+            .map_err(|err| RotatorError::UnrecoverableSecretProblem {
+                secret_id: self.config.secret_id.clone(),
                 message: format!("list service specific credential error: {:?}", err),
             })?;
         info!("found {} service specific credentials: {:?}", creds.len(), creds);
@@ -96,9 +98,9 @@ impl Resource for ServiceSpecificCredentialResource {
         if creds.len() < MAX_SERVICE_SPECIFIC_CREDENTIALS {
             info!("creating service specific credential user_name={} service_name={}", self.user_name, self.service_name);
 
-            cred = create_service_specific_credential(&self.user_name, &self.service_name, timeout)
-                .map_err(|err| RotatorError::IamError {
-                    secret_id: self.secret_id.to_string(),
+            cred = create_service_specific_credential(&self.config, &self.user_name, &self.service_name).await
+                .map_err(|err| RotatorError::UnrecoverableSecretProblem {
+                    secret_id: self.config.secret_id.to_string(),
                     message: format!("create service specific credential error: {:?}", err)
                 })?;
         } else {
@@ -113,22 +115,22 @@ impl Resource for ServiceSpecificCredentialResource {
             if let Some(cred_to_reset) = cred_to_reset {
                 info!("reseting service specific credential id={} user_name={}", cred_to_reset.service_specific_credential_id, cred_to_reset.service_user_name);
 
-                cred = reset_service_specific_credential(&cred_to_reset.service_specific_credential_id, Some(&self.user_name), timeout)
-                    .map_err(|err| RotatorError::IamError {
-                        secret_id: self.secret_id.to_string(),
+                cred = reset_service_specific_credential(&self.config, &cred_to_reset.service_specific_credential_id, Some(&self.user_name)).await
+                    .map_err(|err| RotatorError::UnrecoverableSecretProblem {
+                        secret_id: self.config.secret_id.to_string(),
                         message: format!("reset service specific credential error: {:?}", err)
                     })?;
                 
-                if cred.status == CredentialStatus::Inactive {
+                if cred.status == StatusType::Inactive {
                     info!("activating service specific credential id={} user_name={}", cred.service_specific_credential_id, cred.service_user_name);
 
-                    update_service_specific_credential(&cred.service_specific_credential_id, Some(&self.user_name), CredentialStatus::Active, timeout)
-                        .map_err(|err| RotatorError::IamError {
-                            secret_id: self.secret_id.to_string(),
+                    update_service_specific_credential(&self.config, &cred.service_specific_credential_id, Some(&self.user_name), CredentialStatus::Active).await
+                        .map_err(|err| RotatorError::UnrecoverableSecretProblem {
+                            secret_id: self.config.secret_id.to_string(),
                             message: format!("update service specific credential error: {:?}", err)
                         })?;
                     
-                    cred.status = CredentialStatus::Active;
+                    cred.status = StatusType::Active;
                 }
             } else {
                 // shouldn't get here. there should be at least one credential that isn't current
@@ -147,12 +149,12 @@ impl Resource for ServiceSpecificCredentialResource {
         Ok(secret)
     }
 
-    fn set_password(&self, _s: Secret) -> RotatorResult<()> {
+    async fn set_password(&self, _s: Secret) -> RotatorResult<()> {
         info!("nothing to do to set password");
         Ok(())
     }
 
-    fn test_password(&self, _s: Secret) -> RotatorResult<()> {
+    async fn test_password(&self, _s: Secret) -> RotatorResult<()> {
         info!("test_password unimplemented");
         Ok(())
     }

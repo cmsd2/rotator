@@ -1,73 +1,47 @@
-use std::fmt;
+use lambda_runtime::Diagnostic;
 use serde::Serialize;
-use lambda_runtime::error::{LambdaErrorExt};
 
-#[derive(Clone, Debug, Serialize, LambdaErrorExt)]
+#[derive(Clone, Debug, Serialize, thiserror::Error)]
 pub enum RotatorError {
-    DescribeSecretError(String),
-    GetSecretValue(String),
-    GetRandomPassword(String),
-    PutSecretValue(String),
-    UpdateSecretVersionStage(String),
-    IamError {
-        secret_id: String,
-        message: String,
-    },
+    #[error("Invalid configuration: {message}")]
     InvalidConfig {
+        message: String,
+    },
+    #[error("Unrecoverable error rotating secret: {secret_id}: {message}")]
+    UnrecoverableSecretProblem {
         secret_id: String,
         message: String,
     },
-    SecretNotFound {
+    #[error("Error rotating secret: {secret_id}: {message}")]
+    SecretProblem {
         secret_id: String,
         message: String,
     },
+    #[error("Secret value not found for secret: {secret_id}")]
     SecretValueNotFound {
         secret_id: String,
         version_stage: Option<String>,
-        version_ids: Vec<String>,
-        message: String,
+        version_id: Option<String>,
     },
-    RotationNotEnabled {
-        secret_id: String,
-    },
-    NoStageForRotation {
-        secret_id: String,
-        version: String,
-    },
-    NotSetAsPending {
-        secret_id: String,
-        version: String,
-    },
-    InvalidPasswordParameter {
-        message: String,
-    },
-    EncryptionFailure {
-        secret_id: String,
-        message: String,
-    },
-    SerialisationError {
-        secret_id: String,
-        message: String,
-    },
-    MissingTags {
-        secret_id: String,
-    },
-    MissingTag {
-        secret_id: String,
-        tag_name: String,
-    },
+    #[error("Unexpected error: {message}")]
     Other {
         message: String,
     },
 }
 
-impl fmt::Display for RotatorError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+pub type RotatorResult<R> = std::result::Result<R,RotatorError>;
+
+impl From<RotatorError> for Diagnostic {
+    fn from(value: RotatorError) -> Diagnostic {
+        let (error_type, error_message) = match value {
+            ref err @ RotatorError::InvalidConfig { message: ref _message } => ("NonRetryable", format!("{}", err)),
+            ref err @ RotatorError::UnrecoverableSecretProblem { secret_id: ref _secret_id, message: ref _message } => ("NonRetryable", err.to_string()),
+            ref err @ RotatorError::SecretProblem { secret_id: ref _secret_id, message: ref _message } => ("Retryable", err.to_string()),
+            RotatorError::SecretValueNotFound { ref secret_id, version_stage, version_id } => ("Retryable", format!("Secret value not found for secret_id {} with version_stage {:?} and version_id {:?}", secret_id, version_stage, version_id)),
+            ref err @ RotatorError::Other { message: ref _message } => ("NonRetryable", err.to_string()),};
+        Diagnostic {
+            error_type: error_type.into(),
+            error_message,
+        }
     }
 }
-
-impl std::error::Error for RotatorError {
-}
-
-pub type RotatorResult<R> = std::result::Result<R,RotatorError>;

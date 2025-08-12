@@ -1,29 +1,35 @@
-use std::time::Duration;
-use rusoto_core::RusotoError;
-use rusoto_secretsmanager::{
-    SecretsManager,
-    DescribeSecretRequest,
-    DescribeSecretResponse,
-    DescribeSecretError,
-};
+use aws_sdk_secretsmanager::operation::describe_secret::{DescribeSecretError, DescribeSecretOutput};
 use crate::error::{RotatorResult, RotatorError};
-use crate::SM_CLIENT;
+use crate::config::Config;
 
-pub fn describe_secret(secret_id: &str, timeout: Duration) -> RotatorResult<DescribeSecretResponse> {
+pub async fn describe_secret(config: &Config, secret_id: &str) -> RotatorResult<DescribeSecretOutput> {
     info!("desribing secret {}", secret_id);
 
-    SM_CLIENT.describe_secret(DescribeSecretRequest {
-        secret_id: secret_id.to_string()
-    })
-        .with_timeout(timeout)
-        .sync()
-        .map_err(|e| match e {
-            RusotoError::Service(DescribeSecretError::ResourceNotFound(msg)) => {
-                RotatorError::SecretNotFound {
-                    secret_id: secret_id.to_string(),
-                    message: msg,
+    config.sm_client.describe_secret()
+        .secret_id(secret_id.to_owned())
+        .send()
+        .await
+        .map_err(|err| match err.into_service_error() {
+            DescribeSecretError::ResourceNotFoundException(_) => {
+                RotatorError::UnrecoverableSecretProblem {
+                    secret_id: secret_id.to_owned(),
+                    message: format!("Secret not found: {}", secret_id),
                 }
             },
-            e => RotatorError::DescribeSecretError(format!("{:?}", e))
-        })  
+            DescribeSecretError::InvalidParameterException(_) => {
+                RotatorError::UnrecoverableSecretProblem {
+                    secret_id: secret_id.to_owned(),
+                    message: format!("Invalid parameter for secret: {}", secret_id),
+                }
+            },
+            DescribeSecretError::InternalServiceError(_) => {
+                RotatorError::UnrecoverableSecretProblem {
+                    secret_id: secret_id.to_owned(),
+                    message: format!("Internal service error for secret: {}", secret_id),
+                }
+            },
+            err @ _ => RotatorError::Other {
+                message: format!("Unexpected error describing secret {}: {:?}", secret_id, err),
+            },
+        })
 }

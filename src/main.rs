@@ -1,16 +1,11 @@
 use serde::{Serialize, Deserialize};
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate lazy_static;
-use lambda_runtime::{Context, lambda};
-use lambda_runtime::error::LambdaResultExt;
-use failure::{Compat, Error};
-use rusoto_core::Region;
-use rusoto_iam::IamClient;
-use rusoto_secretsmanager::SecretsManagerClient;
-use std::time::Duration;
+use aws_lambda_events::secretsmanager::SecretsManagerSecretRotationEvent;
+use lambda_runtime::{run, service_fn, tracing, Error, LambdaEvent};
+use aws_config::BehaviorVersion;
 use std::collections::HashMap;
+use std::fmt;
 
 mod describe;
 mod create;
@@ -33,22 +28,7 @@ use resource::{ServiceSpecificCredentialResource, Resource};
 pub use error::*;
 use config::{Config, ResourceType};
 
-lazy_static! {
-    pub static ref SM_CLIENT: SecretsManagerClient = SecretsManagerClient::new(Region::default());
-    pub static ref IAM_CLIENT: IamClient = IamClient::new(Region::UsEast1);
-}
-
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct RotatorEvent {
-    #[serde(rename="SecretId")]
-    secret_id: String,
-    
-    #[serde(rename="ClientRequestToken")]
-    client_request_token: String,
-
-    #[serde(rename="Step")]
-    step: RotatorStep,
-}
+pub type RotatorEvent = SecretsManagerSecretRotationEvent;
 
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize)]
 pub enum RotatorStep {
@@ -65,22 +45,50 @@ pub enum RotatorStep {
     FinishSecret,
 }
 
+impl fmt::Display for RotatorStep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RotatorStep::CreateSecret => write!(f, "createSecret"),
+            RotatorStep::SetSecret => write!(f, "setSecret"),
+            RotatorStep::TestSecret => write!(f, "testSecret"),
+            RotatorStep::FinishSecret => write!(f, "finishSecret"),
+        }
+    }
+}
+
+impl TryFrom<&str> for RotatorStep {
+    type Error = RotatorError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "createSecret" => Ok(RotatorStep::CreateSecret),
+            "setSecret" => Ok(RotatorStep::SetSecret),
+            "testSecret" => Ok(RotatorStep::TestSecret),
+            "finishSecret" => Ok(RotatorStep::FinishSecret),
+            _ => Err(RotatorError::Other {
+                message: format!("Unknown secret rotation step: {}", value),
+            }),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RotatorOutput {
     message: String,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Error> {
     env_logger::init();
-    lambda!(lambda_handler);
+    tracing::init_default_subscriber();
 
-    Ok(())
+    run(service_fn(lambda_handler)).await
 }
 
-fn lambda_handler(e: RotatorEvent, _c: Context) -> Result<RotatorOutput, Compat<Error>> {
+async fn lambda_handler(e: LambdaEvent<SecretsManagerSecretRotationEvent>) -> Result<RotatorOutput, RotatorError> {
     info!("rotator input event={:?}", e);
 
-    rotate(e).failure_compat()?;
+    rotate(e).await?;
     
     let output = RotatorOutput {
         message: format!("ok"),
@@ -91,46 +99,66 @@ fn lambda_handler(e: RotatorEvent, _c: Context) -> Result<RotatorOutput, Compat<
     Ok(output)
 }
 
-fn rotate(e: RotatorEvent) -> RotatorResult<()> {
-    let timeout = Duration::from_secs(2);
+async fn rotate(e: LambdaEvent<SecretsManagerSecretRotationEvent>) -> RotatorResult<()> {
+    let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+    let sm_client = aws_sdk_secretsmanager::Client::new(&config);
+    let iam_client = aws_sdk_iam::Client::new(&config);
 
-    let secret = describe_secret(&e.secret_id, timeout)?;
+    let mut config = Config::new_for_secret(sm_client, iam_client, &e.payload.secret_id)?;
+
+    let secret = describe_secret(&config, &e.payload.secret_id).await?;
     
-    let config = Config::new_for_secret(&e.secret_id, secret.tags)?;
+    let tags = secret.tags.ok_or_else(|| RotatorError::UnrecoverableSecretProblem { 
+            secret_id: e.payload.secret_id.clone(), message: format!("Missing tags") }
+    )?;
+    config.set_tags(tags)?;
+    
     info!("rotating secret event={:?} config={:?}", e, config);
 
     let resource = match config.resource_type {
-        ResourceType::ServiceSpecificCredential => Box::new(ServiceSpecificCredentialResource::new(&config)?) as Box<dyn Resource>,
+        Some(ResourceType::ServiceSpecificCredential) => Box::new(ServiceSpecificCredentialResource::new(&config)?) as Box<dyn Resource>,
+        _ => return Err(RotatorError::InvalidConfig {
+            message: format!("Unsupported resource type for secret {}: {:?}", e.payload.secret_id, config.resource_type),
+        }),
     };
 
     if !secret.rotation_enabled.unwrap_or(false) {
-        error!("Secret {} is not enabled for rotation", e.secret_id);
-        return Err(RotatorError::RotationNotEnabled { secret_id: e.secret_id });
+        error!("Secret {} is not enabled for rotation", e.payload.secret_id);
+        return Err(RotatorError::UnrecoverableSecretProblem {
+            secret_id: e.payload.secret_id,
+            message: format!("Secret is not enabled for rotation")
+        });
     }
 
     let version_ids_to_stages = secret.version_ids_to_stages.unwrap_or(HashMap::new());
     info!("found versions {:?}", version_ids_to_stages);
 
-    let version = version_ids_to_stages.get(&e.client_request_token);
+    let version = version_ids_to_stages.get(&e.payload.client_request_token);
     if version.is_none() {
-        error!("Secret version {} has no stage for rotation of secret {}.", e.client_request_token, e.secret_id);
-        return Err(RotatorError::NoStageForRotation { secret_id: e.secret_id, version: e.client_request_token });
+        error!("Secret version {} has no stage for rotation of secret {}.", e.payload.client_request_token, e.payload.secret_id);
+        return Err(RotatorError::UnrecoverableSecretProblem { 
+            secret_id: e.payload.secret_id,
+            message: format!("Secret version {} has no stage for rotation of secret", e.payload.client_request_token)
+        });
     }
     let version = version.unwrap();
     if version.contains(&"AWSCURRENT".to_string()) {
-        info!("Secret version {} already set as AWSCURRENT for secret {}.", e.client_request_token, e.secret_id);
+        info!("Secret version {} already set as AWSCURRENT for secret {}.", e.payload.client_request_token, e.payload.secret_id);
         return Ok(());
     }
     if !version.contains(&"AWSPENDING".to_string()) {
-        error!("Secret version {} not set as AWSPENDING for rotation of secret {}.", e.client_request_token, e.secret_id);
-        return Err(RotatorError::NotSetAsPending { secret_id: e.secret_id, version: e.client_request_token });
+        error!("Secret version {} not set as AWSPENDING for rotation of secret {}.", e.payload.client_request_token, e.payload.secret_id);
+        return Err(RotatorError::UnrecoverableSecretProblem {
+            secret_id: e.payload.secret_id,
+            message: format!("Secret version {} not set as AWSPENDING for rotation of secret", e.payload.client_request_token)
+        });
     }
 
-    match e.step {
-        RotatorStep::CreateSecret => create_secret(e, resource)?,
-        RotatorStep::SetSecret => set_secret(e)?,
-        RotatorStep::TestSecret => test_secret(e)?,
-        RotatorStep::FinishSecret => finish_secret(e)?,
+    match RotatorStep::try_from(&e.payload.step[..])? {
+        RotatorStep::CreateSecret => create_secret(&config, e.payload, resource).await?,
+        RotatorStep::SetSecret => set_secret(&config, e.payload).await?,
+        RotatorStep::TestSecret => test_secret(&config, e.payload).await?,
+        RotatorStep::FinishSecret => finish_secret(&config, e.payload).await?,
     }
 
     Ok(())
@@ -154,6 +182,6 @@ mod tests {
 
         assert_eq!(event1.secret_id, "secret".to_string());
         assert_eq!(event1.client_request_token, "token".to_string());
-        assert_eq!(event1.step, RotatorStep::CreateSecret);
+        assert_eq!(event1.step, format!("{}", RotatorStep::CreateSecret));
     }
 }

@@ -1,14 +1,12 @@
-use std::time::Duration;
 use crate::{
     RotatorEvent,
     RotatorResult,
 };
 use crate::value::get_secret_value;
+use crate::config::Config;
 
-pub fn set_secret(e: RotatorEvent) -> RotatorResult<()> {
-    let timeout = Duration::from_secs(2);
-
-    let _value = match get_secret_value(&e.secret_id, Some("AWSPENDING"), Some(&e.client_request_token), timeout) {
+pub async fn set_secret(config: &Config, e: RotatorEvent) -> RotatorResult<()> {
+    let _value = match get_secret_value(config, &e.secret_id, Some("AWSPENDING"), Some(&e.client_request_token)).await {
         Ok(value) => {
             info!("setSecret: Successfully retrieved secret for {}.", e.secret_id);
             Ok(value)
