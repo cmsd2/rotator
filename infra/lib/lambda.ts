@@ -1,5 +1,6 @@
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as codedeploy from 'aws-cdk-lib/aws-codedeploy';
 import { Construct } from 'constructs';
 
@@ -12,6 +13,7 @@ export interface LambdaProps {
     runtime: lambda.Runtime,
     deploymentConfig: codedeploy.ILambdaDeploymentConfig,
     environment?: { [key: string]: string },
+    logGroup?: logs.ILogGroup,
 }
 
 export interface LambdaResult {
@@ -38,6 +40,7 @@ export function lambda_deployment(construct: Construct, id: string, props: Lambd
       runtime: props.runtime,
       role: role,
       environment: props.environment,
+      logGroup: props.logGroup,
       // Auto lets Lambda roll out runtime patches, including ca-certificates updates
       runtimeManagementMode: lambda.RuntimeManagementMode.AUTO,
     });
