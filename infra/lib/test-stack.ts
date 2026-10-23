@@ -29,9 +29,14 @@ export class TestStack extends cdk.Stack {
     cdk.Tags.of(secret).add('rotator:userName', user.userName);
     cdk.Tags.of(secret).add('rotator:serviceName', 'codecommit.amazonaws.com');
 
-    secret.addRotationSchedule(id + '-rotation', {
-        rotationLambda: props.rotator_lambda,
-        automaticallyAfter: cdk.Duration.days(7),
+    // addRotationSchedule would add an invoke permission on the rotator that references
+    // this stack's secret, creating a cycle. InfraStack already lets Secrets Manager invoke it.
+    new secretsmanager.CfnRotationSchedule(this, id + '-rotation', {
+        secretId: secret.secretArn,
+        rotationLambdaArn: props.rotator_lambda.functionArn,
+        rotationRules: {
+            automaticallyAfterDays: 7,
+        },
     });
 
     let policy = new iam.ManagedPolicy(this, id + '-user-policy');

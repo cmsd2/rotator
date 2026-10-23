@@ -22,7 +22,7 @@ export class InfraStack extends cdk.Stack {
 
     let rotator = lambda_deployment(this, 'rotator', {
       aliasName: aliasName,
-      code: props?.code ?? lambda.Code.fromAsset(path.join(__dirname, '..', '..', 'dist', 'rotator.zip')),
+      code: props?.code ?? lambda.Code.fromAsset(path.join(__dirname, '..', '..', 'target', 'lambda', 'rotator', 'bootstrap.zip')),
       handler: 'unused',
       hash: hash,
       memorySize: 128,
