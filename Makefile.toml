@@ -25,18 +25,9 @@ dependencies = [
 [tasks.ci]
 dependencies = [
     "test",
-    "build_release",
-    "package"
+    "lambda_package"
 ]
 
 [tasks.lambda_package]
-dependencies = [
-    "build_release"
-]
-script = [
-'''
-mkdir -p dist/rotator
-cp target/release/rotator dist/rotator/bootstrap
-zip -j dist/rotator.zip dist/rotator/bootstrap
-'''
-]
+command = "cargo"
+args = ["lambda", "build", "--release", "--x86-64", "--output-format", "zip"]
