@@ -1,15 +1,15 @@
-import * as cdk from '@aws-cdk/core';
-import * as iam from '@aws-cdk/aws-iam';
-import * as lambda from '@aws-cdk/aws-lambda';
-import * as codedeploy from '@aws-cdk/aws-codedeploy';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as codedeploy from 'aws-cdk-lib/aws-codedeploy';
+import { Construct } from 'constructs';
 
 export interface LambdaProps {
     hash: string | undefined,
     aliasName: string,
-    code: any,
+    code: lambda.Code,
     handler: string,
     memorySize: number,
-    runtime: any,
+    runtime: lambda.Runtime,
     deploymentConfig: codedeploy.ILambdaDeploymentConfig,
     environment?: { [key: string]: string },
 }
@@ -19,7 +19,7 @@ export interface LambdaResult {
     lambda: lambda.Function,
 }
 
-export function lambda_deployment(construct: cdk.Construct, id: string, props: LambdaProps): LambdaResult {
+export function lambda_deployment(construct: Construct, id: string, props: LambdaProps): LambdaResult {
     if (!props.hash) {
       throw "env var GITHUB_SHA not found";
     }
@@ -38,9 +38,13 @@ export function lambda_deployment(construct: cdk.Construct, id: string, props: L
       runtime: props.runtime,
       role: role,
       environment: props.environment,
+      // Auto lets Lambda roll out runtime patches, including ca-certificates updates
+      runtimeManagementMode: lambda.RuntimeManagementMode.AUTO,
     });
 
-    const version = fn.addVersion(props.hash);
+    const version = new lambda.Version(fn, 'Version' + props.hash, {
+      lambda: fn,
+    });
 
     const alias = new lambda.Alias(construct, id + '-function-alias', {
       aliasName: props.aliasName,

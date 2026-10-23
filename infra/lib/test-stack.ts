@@ -1,15 +1,16 @@
-import * as cdk from '@aws-cdk/core';
-import * as iam from '@aws-cdk/aws-iam';
-import * as codecommit from '@aws-cdk/aws-codecommit';
-import * as lambda from '@aws-cdk/aws-lambda';
-import * as secretsmanager from '@aws-cdk/aws-secretsmanager';
+import * as cdk from 'aws-cdk-lib';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as codecommit from 'aws-cdk-lib/aws-codecommit';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { Construct } from 'constructs';
 
 export interface TestStackProps extends cdk.StackProps {
     rotator_lambda: lambda.IFunction,
 }
 
 export class TestStack extends cdk.Stack {
-  constructor(scope: cdk.Construct, id: string, props: TestStackProps) {
+  constructor(scope: Construct, id: string, props: TestStackProps) {
     super(scope, id, props);
 
     let repo = new codecommit.Repository(this, id + '-repo', {
@@ -24,10 +25,9 @@ export class TestStack extends cdk.Stack {
     let secret = new secretsmanager.Secret(this, id + '-secret', {
         secretName: id,
     });
-    secret.secretValueFromJson('{}');
-    cdk.Tag.add(secret, 'rotator:resourceType', 'ServiceSpecificCredential');
-    cdk.Tag.add(secret, 'rotator:userName', user.userName);
-    cdk.Tag.add(secret, 'rotator:serviceName', 'codecommit.amazonaws.com');
+    cdk.Tags.of(secret).add('rotator:resourceType', 'ServiceSpecificCredential');
+    cdk.Tags.of(secret).add('rotator:userName', user.userName);
+    cdk.Tags.of(secret).add('rotator:serviceName', 'codecommit.amazonaws.com');
 
     secret.addRotationSchedule(id + '-rotation', {
         rotationLambda: props.rotator_lambda,
