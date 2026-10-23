@@ -31,13 +31,16 @@ export class TestStack extends cdk.Stack {
 
     // addRotationSchedule would add an invoke permission on the rotator that references
     // this stack's secret, creating a cycle. InfraStack already lets Secrets Manager invoke it.
-    new secretsmanager.CfnRotationSchedule(this, id + '-rotation', {
+    const rotation = new secretsmanager.CfnRotationSchedule(this, id + '-rotation', {
         secretId: secret.secretArn,
         rotationLambdaArn: props.rotator_lambda.functionArn,
         rotationRules: {
             automaticallyAfterDays: 7,
         },
     });
+    // Keep the logical ID the CDK v1 RotationSchedule had. A new ID makes CloudFormation
+    // create a replacement and then delete the old schedule, which cancels rotation.
+    rotation.overrideLogicalId('rotatortestsecretrotatortestrotation6FC7E56C');
 
     let policy = new iam.ManagedPolicy(this, id + '-user-policy');
 
