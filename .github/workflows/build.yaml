@@ -5,6 +5,10 @@ on: [push]
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Lets the deploy step exchange GitHub's OIDC token for the github-rotator role.
+      id-token: write
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,12 +42,22 @@ jobs:
         with:
           name: rotator.zip
           path: target/lambda/rotator/bootstrap.zip
+      # Master deploys as github-rotator. Other branches get github-rotator-read,
+      # which can only run cdk diff.
+      - name: aws credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::122710858537:role/${{ github.ref == 'refs/heads/master' && 'github-rotator' || 'github-rotator-read' }}
+          aws-region: eu-west-1
+      - name: diff infra
+        if: github.ref != 'refs/heads/master'
+        run: |
+          cd infra
+          npx cdk diff --method=template rotator rotator-test
+      # rotator-github-actions is deployed by hand (see infra/README.md), so CI
+      # can't change the role it deploys with.
       - name: deploy infra
         if: github.ref == 'refs/heads/master'
         run: |
           cd infra
-          npx cdk deploy --require-approval never --ci '*'
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: eu-west-1
+          npx cdk deploy --require-approval never --ci rotator rotator-test
